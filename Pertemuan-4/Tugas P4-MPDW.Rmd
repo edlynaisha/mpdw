@@ -1,0 +1,233 @@
+---
+title: "Tugas 3 P4-MPDW"
+author: "Edlyn Aisha Maharani - M0401241007"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+# 1. Proses MA
+Melalui program R:
+• Bangkitkan model MA(2) dengan 𝜃1 = 0.4 dan 𝜃2 = 0.6 sebanyak
+300 data (Manual dan dengan arima.sim)
+```{r}
+set.seed(1234)
+wn <- rnorm(300) #bangkitin 300 data normal
+ts.plot(wn) #plot time series white noise
+acf(wn, lag.max = 20)
+```
+```{r}
+length(wn)
+class(wn)
+```
+```{r}
+# Bangkitin data secara mmanual 𝜃1 = 0.4 dan 𝜃2 = 0.6 
+n <- 300
+ma2 <- wn[1:2] # 2 nilai awal e_t (beum ada lag)
+for(i in 3:n){
+  ma2[i] <- wn[i] + 0.4*wn[i-1] + 0.6*wn[i-2]
+}
+```
+
+```{r}
+# bangkitin dengan arima.sim
+# MA 2 gunakan q (orde MA) = 2
+ma2.sim <- arima.sim(list(order = c(0,0,2), ma = c(0.4, 0.6)), n = 300)
+ma2.sim
+```
+
+• Buat plot time series, plot ACF, plot PACF dan plot EACF. Idenifikasi
+apakah data tersebut stasioner
+```{r}
+ts.plot(ma2, main = "Time Series MA(2)")
+acf(ma2, lag.max = 20, main = "ACF MA(2)")
+pacf(ma2, lag.max = 20, main = "PACF MA(2)")
+TSA::eacf(ma2)
+```
+Plot time series bergerak di sekitar rataan konstan yaitu data stasioner. Plot ACF cuts off setelah lag 2 dimana memiliki signifikan di lag 1–2, lalu turun ke luar batas signifikansi, sedangkan bagi PACF tails off (meluruh/bergelombang). Pola segitiga nol pada EACF berada di ordo AR(0), MA(2), sesuai teori.
+
+Berdasarkan pola segitiga nol pada plot EACF, terlihat bahwa segitiga nol berada pada ordo AR(0) dan ordo MA(2) dimana sesuai dengan teori. 
+
+• Buat scatterplot antara 𝑌𝑡 dengan 𝑌𝑡−1, 𝑌𝑡 dengan 𝑌𝑡−2 serta 𝑌𝑡
+dengan 𝑌𝑡−3
+```{r}
+# scatterplot antar lag
+yt   <- ma2[-c(1,2,3)] #yt posisi ke 4-300
+yt_1 <- ma2[-c(1,2,300)] # yt posisi 3-299
+yt_2 <- ma2[-c(1,299,300)] # yt posisi 2-288
+yt_3 <- ma2[-c(298,299,300)] # yt posisi 1-297
+
+plot(yt, yt_1, main = "Yt vs Yt-1")
+plot(yt, yt_2, main = "Yt vs Yt-2")
+plot(yt, yt_3, main = "Yt vs Yt-3")
+```
+Pada scatterplot Yt vs Yt-1 titik titik cenderung membentuk pola diagonal naik dari kiri bawah ke kanan atas yang mengartikan adanya hubungan positif antar Yt dan Yt-1.
+
+Pada scatterplot Yt vs Yt-2 titik titik masih membentuk pola diagonal namun lebih longgar dan menyebar dengan nilai korelasi yang lebih kecil dibandingkan Yt vs Yt-1, yang mengartikan adanya hubungan positif antar Yt dan Yt-2.
+
+Pada scatterplot Yt vs Yt-3 titik titik membentuk gerombolan yang tidak memiliki pola dan arah diagonal yang jelas. Hal ini didukung oleh nilai korelasi yang mendekati teori yang ada yaitu 0.
+
+Pada ketiga scatterplot ini mendukung sifat MA(2), dimana korelasi kuat di lag 1 dan 2, lalu cut off (hilang/mendekati nol) di lag 3, sejalan dengan pola cut off yang seharusnya muncul di plot ACF.
+
+• Hitung autokorelasi masing masing baik dari data bangkitan maupun
+secara teoritis
+
+```{r}
+cor(yt, yt_1) #bangkitan rho1
+cor(yt, yt_2) #bangkitan rho2
+cor(yt, yt_3) #bangkitan rho3
+```
+
+```{r}
+# rumus teoritis
+theta1 <- 0.4; theta2 <- 0.6
+denom <- 1 + theta1^2 + theta2^2
+rho1_teori <- (theta1 + theta1*theta2)/denom; rho1_teori
+rho2_teori <- theta2/denom; rho2_teori
+rho3_teori <- 0; rho3_teori
+```
+korelasi hasil simulasi pada lag 1 dan 2 mendekati nilai teoritis (≈0.421 dan ≈ 0.395), sedangkan pada lag 3 mendekati 0 dimana sesuai sifat MA(2) yang autokorelasinya terputus (cut off) setelah lag ke-q.
+
+# 2. Proses AR(2)
+Melalui program R:
+• Bangkitkan model AR(2) dengan 𝜙1 = 0.5 dan 𝜙2 = 0.2 sebanyak
+300 data (Manual dan dengan arima.sim)
+```{r}
+set.seed(1234)
+n <- length(wn); n
+
+ar2 <- c(1:n)
+ar2[1] <- wn[1]
+ar2[2] <- wn[2]+0.5*ar2[1]
+
+for(i in 3:n){
+  ar2[i] <- wn[i] + 0.5*ar2[i-1] + 0.2*ar2[i-2]
+}
+```
+```{r}
+# bangkitkan dengan arima.sim()
+# order p (Orde AR) = 2
+ar2_sim <- arima.sim(list(order = c(2,0,0), ar = c(0.5, 0.2)), n = 300) 
+ar2_sim
+```
+
+• Buat plot time series, plot ACF, plot PACF dan plot EACF. Idenifikasi
+apakah data tersebut stasioner
+```{r}
+ts.plot(ar2, main = "Time Series AR(2)")
+acf(ar2, lag.max = 20, main = "ACF (AR)")
+pacf(ar2, lag.max = 20, main = "PACF AR(2)")
+TSA::eacf(ar2)
+
+```
+karena φ1+φ2 = 0.7 < 1, φ2−φ1 = −0.3 < 1, dan |φ2| < 1, akar-akar persamaan karakteristik berada di luar lingkaran satuan sehingga proses merupakan stasioner, Hal ini dapat terlihat juga dari plot time series yang bergerak di sekitar rataan konstan. Plot ACF tails off (meluruh membentuk pola sinus/eksponensial), sedangkan PACF cuts off setelah lag 2. Segitiga nol pada EACF berada di ordo AR(2), MA(0), konsisten dengan teori.
+
+• Buat scatterplot antara 𝑌𝑡 dengan 𝑌𝑡−1, 𝑌𝑡 dengan 𝑌𝑡−2 serta 𝑌𝑡 dengan 𝑌𝑡−3
+```{r}
+yt   <- ar2[-c(1,2,3)] #yt posisi ke 4-300
+yt_1 <- ar2[-c(1,2,300)] #yt posisi ke 3-299
+yt_2 <- ar2[-c(1,299,300)] #yt posisi ke 2-298
+yt_3 <- ar2[-c(298,299,300)] #yt posisi ke 1-297
+
+plot(yt, yt_1, main = "Yt vs Yt-1")
+plot(yt, yt_2, main = "Yt vs Yt-2")
+plot(yt, yt_3, main = "Yt vs Yt-3")
+```
+
+Pada scatterplot Yt vs Yt-1 titik titik cenderung membentuk pola diagonal naik dari kiri bawah ke kanan atas yang mengartikan adanya hubungan positif kuat antar Yt dan Yt-1.
+
+Pada scatterplot Yt vs Yt-2 titik titik masih membentuk pola diagonal namun lebih longgar dan menyebar dengan nilai korelasi yang lebih kecil dibandingkan Yt vs Yt-1, yang mengartikan adanya hubungan positif antar Yt dan Yt-2.
+
+Pada scatterplot Yt vs Yt-3 titik titik masih membentuk pola diagonal namun lebih longgar dan menyebar dengan nilai korelasi yang lebih kecil dibandingkan Yt vs Yt-2. Nilai korelasi ditunjukkan dengan nilai korelasi yang lebih kecil dibandingkan korelasi antara Yt dan Yt-2 serta Yt dan Yt-1.
+
+Pada ketiga scatterplot ini mendukung sifat RA(2), dimana tidak memiliki cut off(rho meluruh terus tanpa pernah nol), korelasi lag 1, 2, 3 dari data hasil bangkitan mendekati nilai teoritis( ≈ 0.625, ≈ 0.5125, ≈0.38125), yang secara berangsur-angsur menunjukkan penurunan.
+
+• Hitung autokorelasi masing masing baik dari data bangkitan maupun
+secara teoritis
+
+```{r}
+# rumus bangkitan
+cor(yt, yt_1)
+cor(yt, yt_2)
+cor(yt, yt_3)
+
+# Teoritis (rekursi Yule-Walker): rho_k = phi1*rho_{k-1} + phi2*rho_{k-2}
+phi1 <- 0.5; phi2 <- 0.2
+rho1_teori <- phi1/(1-phi2); rho1_teori                    
+rho2_teori <- phi1*rho1_teori + phi2*1; rho2_teori          
+rho3_teori <- phi1*rho2_teori + phi2*rho1_teori; rho3_teori 
+
+ARMAacf(ar = c(0.5, 0.2), lag.max = 3)
+```
+
+# 3. Proses ARMA(2,2)
+Melalui program R:
+• Bangkitkan model ARMA(2,2) dengan 𝜃1 = 0.4, 𝜃2 = 0.6 ,𝜙1 = 0.5
+dan 𝜙2 = 0.2 sebanyak 300 data (Manual dan arima.sim)
+```{r}
+arma22 <- c(1:n)
+arma22[1] <- wn[1]
+arma22[2] <- wn[2] + 0.5*arma22[1] + 0.4*wn[1]
+
+for (i in 3:n) {
+  arma22[i] <- wn[i] + 0.5*arma22[i-1] + 0.2*arma22[i-2] +
+               0.4*wn[i-1] + 0.6*wn[i-2]
+}
+```
+
+```{r}
+# bangkitin dengan arima.sim
+arma22.sim <- arima.sim(list(order = c(2,0,2),
+                             ar = c(0.5, 0.2),
+                             ma = c(0.4, 0.6)),
+                        n = 300)
+```
+
+• Buat plot time series, plot ACF, plot PACF dan plot EACF. Idenifikasi
+apakah data tersebut stasioner
+```{r}
+ts.plot(arma22, main = "Time Series ARMA(2,2)")
+acf(arma22, lag.max = 20, main = "ACF ARMA(2,2)")
+pacf(arma22, lag.max = 20, main = "PACF ARMA(2,2)")
+TSA::eacf(arma22)
+```
+sama halnya dengan AR(2), syarat kestasioneran terpenuhi (dimana φ1+φ2<1, dst.) sehingga plot time series bergerak di sekitar rataan konstan yang mengindikasikan proses stasioner. Berbeda dari MA(2) atau AR(2) saja, di sini baik ACF maupun PACF sama-sama tails off (tidak ada yang cut off tegas), karena ARMA memiliki komponen AR dan MA sekaligus. Pada EACF menunjukkan segitiga nol mulai di ordo AR(2), MA(2)
+
+• Buat scatterplot antara 𝑌𝑡 dengan 𝑌𝑡−1, 𝑌𝑡 dengan 𝑌𝑡−2 serta 𝑌𝑡dengan 𝑌𝑡−3
+
+```{r}
+yt   <- arma22[-c(1,2,3)] #yt posisi ke 4-300
+yt_1 <- arma22[-c(1,2,300)] #yt posisi ke 3-299
+yt_2 <- arma22[-c(1,299,300)] #yt posisi ke 2-298
+yt_3 <- arma22[-c(298,299,300)] #yt posisi ke 1-297
+
+plot(yt, yt_1, main = "Yt vs Yt-1")
+plot(yt, yt_2, main = "Yt vs Yt-2")
+plot(yt, yt_3, main = "Yt vs Yt-3")
+```
+Pada scatterplot Yt vs Yt-1 titik titik cenderung membentuk pola diagonal naik dari kiri bawah ke kanan atas yang mengartikan adanya hubungan positif kuat antar Yt dan Yt-1.
+
+Pada scatterplot Yt vs Yt-2 titik titik masih membentuk pola diagonal namun lebih longgar dan menyebar dengan nilai korelasi yang lebih kecil dibandingkan Yt vs Yt-1, yang mengartikan adanya hubungan positif antar Yt dan Yt-2.
+
+Pada scatterplot Yt vs Yt-3 titik titik masih membentuk pola diagonal namun lebih longgar dan menyebar dengan nilai korelasi yang lebih kecil dibandingkan Yt vs Yt-2. Nilai korelasi ditunjukkan dengan nilai korelasi yang lebih kecil dibandingkan korelasi antara Yt dan Yt-2 serta Yt dan Yt-1.
+
+
+• Hitung autokorelasi masing masing baik dari data bangkitan maupun
+secara teoritis
+
+```{r}
+# rumus korelasi data bangkitan
+cor(yt, yt_1)
+cor(yt, yt_2)
+cor(yt, yt_3)
+
+# Teoritis: untuk ARMA(2,2) rumus manualnya rumit,
+# jadi cukup pakai fungsi bawaan R:
+ARMAacf(ar = c(0.5, 0.2), ma = c(0.4, 0.6), lag.max = 3)
+```
+nilai korelasi hasil bangkitan pada lag 1, 2, 3 dibandingkan dengan output ARMAacf() — semakin dekat nilai empiris dan teoritis, semakin baik simulasi mewakili model ARMA(2,2) yang ditetapkan. Karena ada komponen AR, autokorelasi tidak langsung nol setelah lag ke-2 seperti pada MA(2) murni, melainkan terus meluruh secara bertahap.
