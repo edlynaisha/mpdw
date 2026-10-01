@@ -1,0 +1,482 @@
+---
+title: "Tugas Kuliah 2 - MPDW"
+author: "Edlyn Aisha Maharani - M0401241007"
+date: "`r Sys.Date()`"
+output: 
+  rmdformats::readthedown:
+    highlight: tango
+    toc_depth: 3
+    code_folding: show
+    css: styles.css
+---
+
+# Load Data dan Library
+```{r}
+library(quantmod)
+library(rio)
+library(writexl)
+library(tseries)
+library(MASS)
+library(forecast)
+library(TSA)
+library(lmtest)
+```
+
+## Ambil Data dengan library quantmod
+```{r}
+# Ambil data 3 tahun kebelakang
+# GC = F kode emas berjangka (Gold Futures) dari Yahoo Finances
+data_emas1 <- getSymbols("GC=F", src = "yahoo", 
+                        from = "2023-09-30", to = "2026-09-30",
+                        auto.assign = F)
+
+# Lihat data
+ls() # objek di environment
+str(data_emas1)
+head(data_emas1)
+
+#cek missing value
+sum(is.na(data_emas1))
+```
+Data diambil dari Yahoo Finance dengan fungsi `getSymbols()` dari package `quantmod`. Simbol yang dipakai adalah GC=F, yaitu kontrak emas berjangka (Gold Futures), dengan periode 3 tahun kebelakang, yaitu: 30 September 2023 sampai 30 September 2026.
+
+## Cek missing value
+```{r}
+# Isi NA dengan nilai observasi terakhir 
+library(zoo)
+data_emas1 <- na.locf(data_emas1)
+
+sum(is.na(data_emas1))
+length(data_emas1)
+nrow(data_emas1)
+```
+Missing value diisi dengan `na.locf()` (Last Observation Carried Forward), yaitu mengisi nilai kosong dengan nilai observasi terakhir sebelumnya. Metode ini dipilih karena harga emas bergerak berkesinambungan dan cocok untuk data runtun waktu, sehingga tidak mengubah pola waktu data. Setelah itu `sum(is.na())` bernilai 0, jadi seluruh data sudah lengkap.
+
+```{r}
+# Ambil 1 variabel harga Close
+harga_emas <- data_emas1$`GC=F.Close`
+
+nrow(harga_emas)
+head(harga_emas)
+```
+```{r}
+data_emas.ts <- ts(data_emas1$`GC=F.Close`)
+summary(data_emas.ts)
+```
+Dari enam kolom yang tersedia, analisis hanya memakai harga penutupan (Close). Alasannya, ARIMA yang dibuat adalah model univariat, yaitu hanya memodelkan satu variabel terhadap waktu. Harga Close dipilih karena paling umum dipakai sebagai representasi harga harian, yaitu harga terakhir pada saat pasar tutup.
+
+## Download file Excel
+```{r}
+#install.packages("writexl")
+library(writexl)
+
+# convert dulu ke data.frame biasa (karena data_emas masih xts)
+df_emas <- data.frame(Tanggal = index(data_emas1), coredata(data_emas1))
+
+# export ke excel
+# write_xlsx(df_emas, "data_emas1.xlsx")
+```
+
+# Plot Data Time Series
+```{r}
+# Ganti ke vektor numerik biasa
+emas <- as.numeric(data_emas1$`GC=F.Close`)
+data_emas.ts <- ts(emas)
+n <- length(data_emas.ts)
+n   # harus >= 500
+
+plot.ts(data_emas.ts, lty = 1, xlab = "Waktu", ylab = "Harga Emas (USD)",
+        main = "Plot Data Harga Emas Harian")
+```
+Plot data harga emas harian menunjukkan tren peningkatan secara umum (uptrend) dalam jangka panjang, dimulai dari level di bawah 2.0       USD pada periode awal hingga mencapai level harga yang lebih volatil pada periode akhir. Pertumbuhan harga terlihat relatif stabil dari periode 0 hingga mendekati periode 500, sebelum mengalami kenaikan tajam hingga melebihi puncak 5.000 USD sekitar periode 600. Setelah mencapai titik tertingginya, grafik memperlihatkan koreksi yang cukup signifikan dan fluktuasi harga yang lebih tinggi. Secara keseluruhan, data ini bersifat tidak stasioner karena memiliki pola tren yang kuat dan varians yang berubah seiring berjalannya waktu.
+
+# Pembagian Data Train dan Test
+```{r}
+n_train <- floor(0.85 * n)   # proporsi bebas, boleh diubah
+
+train.ts <- ts(emas[1:n_train])
+test.ts  <- ts(emas[(n_train + 1):n], start = n_train + 1)
+
+c(Train = length(train.ts), Test = length(test.ts))
+```
+Data train dan data test dibagi menjadi 85%:15%.
+
+# Kestasioneran dalam rataan 
+## Plot ACF
+```{r}
+acf(train.ts)
+```
+
+Berdasarkan plot ACF, terlihat bahwa plot ACF data menurun secara perlahan (tails of slowly). Hal ini juga menjadi indikasi bahwa data tidak stasioner dalam rataan
+
+## Uji ADF
+```{r}
+tseries::adf.test(train.ts)
+```
+$H_0$ : Data tidak stasioner dalam rataan
+
+$H_1$ : Data stasioner dalam rataan
+
+Berdasarkan uji ADF tersebut, didapat p-value sebesar0.6149 yang lebih besar dari taraf nyata 5% sehingga tak tolak dan menandakan bahwa data tidak stasioner dalam rataan. Hal ini sesuai dengan hasil eksplorasi menggunakan plot time series dan plot ACF, sehingga ketidakstasioneran model kedepannya harus ditangani
+
+## Plot Box-Cox
+```{r}
+index <- seq(1:length(train.ts))
+
+# Box-Cox
+bc <- boxcox(train.ts ~ index, lambda = seq(-2, 2, by = 0.1))
+```
+
+## Selang Kepercayaan
+```{r}
+# Nilai lambda optimum (rounded)
+lambda_opt <- bc$x[which.max(bc$y)]
+lambda_opt
+```
+
+```{r}
+# Selang kepercayaan 95% untuk lambda
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, df = 1)]
+
+# Batas bawah dan batas atas
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+
+# TRUE = selang mengandung 1 -> stasioner dalam ragam
+min(ci_lambda) <= 1 & max(ci_lambda) >= 1
+```
+
+## Penanganan Ketidakstasioneran Data
+
+### Transformasi (Box-Cox tidak memuat 1)
+```{r}
+lam <- 0   # transformasi log (alternatif: -1)
+train.tr <- BoxCox(train.ts, lam)
+
+plot.ts(train.tr, lty = 1, xlab = "Waktu", ylab = "log(Harga Emas)",
+        main = "Plot Data Train Setelah Transformasi")
+```
+Setelah transformasi logaritma, plot data train masih menunjukkan tren naik sehingga belum stasioner dalam rataan. Namun, pola kenaikannya lebih mulus dan fluktuasi di bagian akhir tidak sebesar pada data sebelum transformasi.
+
+### Differencing, Plot ACF, dan Uji ADF 
+```{r}
+train.diff <- diff(train.tr, differences = 1)
+
+plot.ts(train.diff, lty = 1, xlab = "Waktu", ylab = "Data Difference 1",
+        main = "Plot Differencing Pertama")
+acf(train.diff, main = "ACF Data Differencing")
+tseries::adf.test(train.diff)
+```
+
+Setelah transformasi log dan differencing pertama, data berfluktuasi di sekitar nol tanpa tren, sehingga rataan sudah stasioner. Dibandingkan data tanpa transformasi, lebar fluktuasi jauh lebih stabil. Namun masih terlihat fluktuasi yang sedikit melebar pada amatan sekitar 380 dan 500 ke atas, dengan lonjakan terbesar sekitar amatan 590 (selisih log sekitar -0,11, setara penurunan harian sekitar 10%). Hal ini menunjukkan ragam sudah jauh lebih konstan tetapi belum sepenuhnya homogen, yang umum pada data harga keuangan (volatility clustering).
+
+Seluruh lag pada plot ACF berada di dalam batas signifikansi, sehingga tidak ada lag yang signifikan. Data differencing mendekati white noise, yang mengindikasikan log harga emas mendekati random walk. Model yang mungkin adalah ARIMA(0,1,0), ARIMA(0,1,1), dan ARIMA(1,1,0).
+
+Uji ADF pada data differencing menghasilkan p-value : 0.01. Karena p-value < 0,05, tolak H0, sehingga data sudah stasioner dalam rataan dan orde differencing d = 1.
+
+```{r}
+index_diff <- seq(1:length(train.diff))
+
+# Geser data supaya positif (syarat Box-Cox)
+min_val <- min(train.diff)
+if (min_val <= 0) {
+  const <- abs(min_val) + 1
+  train.diff_shifted <- train.diff + const
+} else {
+  train.diff_shifted <- train.diff
+}
+
+bc_diff <- boxcox(train.diff_shifted ~ index_diff, lambda = seq(-2, 3, by = 0.1))
+```
+
+```{r}
+lambda_opt_diff <- bc_diff$x[which.max(bc_diff$y)]
+lambda_opt_diff
+
+ci_diff <- bc_diff$x[bc_diff$y > max(bc_diff$y) - 0.5 * qchisq(0.95, df = 1)]
+c(Batas_Bawah = min(ci_diff), Batas_Atas = max(ci_diff))
+```
+Hasil Box-Cox pada data differencing menunjukkan nilai lambda optimum sebesar 3 dengan selang kepercayaan **[2.596, 3.000]**. Karena selang kepercayaan tidak memuat angka 1, ini mengindikasikan bahwa ragam data differencing masih belum homogen. Namun, dalam praktik pemodelan ARIMA, langkah ini sering diabaikan jika data sudah stasioner dalam rataan dan plot ACF/PACF sudah menunjukkan pola yang jelas (white noise). Fokus utama adalah pada stasioneritas rataan untuk menentukan orde `d`.
+
+## Model Potensial
+Setelah data ditransformasi (log) dan di-differencing orde 1, data train.diff sudah stasioner dalam rataan. Langkah selanjutnya adalah identifikasi model potensial menggunakan plot ACF, PACF, dan EACF.
+
+### Plot ACF
+```{r}
+acf(train.diff)
+```
+Seluruh garis lag berada di dalam rentang batas signifikansi (garis putus-putus biru). Ini mengindikasikan bahwa tidak ada autokorelasi yang signifikan pada data diferensiasi tersebut, sehingga deret sudah stasioner dan menyerupai white noise (model ARIMA(0,d,0)) atau orde MA (q) = 0.
+
+### Plot PACF
+```{r}
+pacf(train.diff)
+```
+Sama halnya dengan ACF, hampir seluruh garis lag pada plot PACF berada di dalam batas signifikansi (kecuali sedikit sentuhan pada lag 15 yang tidak terhitung signifikan secara praktis). Hal ini memperkuat indikasi bahwa komponen Autoregressive (AR) tidak diperlukan. maka orde AR (p) = 0
+
+
+### Plot EACF
+```{r}
+eacf(train.diff)
+```
+Pola segitiga bernilai 'o' (tidak signifikan) paling kiri atas dimulai langsung pada koordinat AR = 0 dan MA = 0 (baris 0, kolom 0). Berdasarkan aturan EACF, titik sudut paling atas dari segitiga 'o' ini menentukan orde tentatif model, yaitu ARIMA(0,1,0).
+
+Berdasarkan ACF, PACF, dan EACF, tidak teridentifikasi komponen AR maupun MA yang jelas, sehingga model tentatif yang diusulkan adalah ARIMA(0,1,0), serta ARIMA(0,1,1), ARIMA(1,1,0), dan ARIMA(1,1,1) sebagai pembanding. Karena log harga memiliki tren naik jangka panjang, ditambahkan pula ARIMA(0,1,0) dengan drift.
+
+## Identifikasi Model 
+```{r}
+par(mfrow = c(1,2))
+acf(train.diff, main="ACF Difference", lag.max=20)
+pacf(train.diff, main="PACF Difference", lag.max=20)
+```
+
+```{r}
+# Identifikasi melalui EACF
+eacf(train.diff)
+```
+
+
+# Pendugaan Parameter Model, Uji Signifikansi dan AIC
+## Model ARIMA (0,1,0)
+```{r}
+# Model Tentatif
+model1.kurs <- Arima(train.tr, order=c(0,1,0), method="ML")
+summary(model1.kurs)
+# tidak memiliki parameter sehingga tidak perlu coeftest
+```
+## Model ARIMA (0,1,1)
+```{r}
+model2.kurs <- Arima(train.tr, order=c(0,1,1), method="ML")
+summary(model2.kurs)
+lmtest::coeftest(model2.kurs)
+```
+## Model ARIMA (1,1,0)
+```{r}
+model3.kurs <- Arima(train.tr, order=c(1,1,0), method="ML")
+summary(model3.kurs)
+lmtest::coeftest(model3.kurs)
+```
+## Model ARIMA (1,1,1)
+```{r}
+model4.kurs <- Arima(train.tr, order=c(1,1,1), method="ML")
+summary(model4.kurs)
+lmtest::coeftest(model4.kurs)
+```
+## Model ARIMA (0,1,0) dengan drift
+```{r}
+# ARIMA(0,1,0) dengan drift
+model5.kurs <- Arima(train.tr, order=c(0,1,0), include.drift=TRUE, method="ML")
+summary(model5.kurs)
+lmtest::coeftest(model5.kurs)
+```
+## Ringkasan AIC
+```{r}
+hasil_model_kurs <- data.frame(
+  Model = c("ARIMA(0,1,0)",
+            "ARIMA(0,1,1)",
+            "ARIMA(1,1,0)",
+            "ARIMA(1,1,1)",
+            "ARIMA(0,1,0) with drift"),
+  AIC = c(
+    AIC(model1.kurs),
+    AIC(model2.kurs),
+    AIC(model3.kurs),
+    AIC(model4.kurs),
+    AIC(model5.kurs)
+  ),
+  BIC = c(
+    BIC(model1.kurs),
+    BIC(model2.kurs),
+    BIC(model3.kurs),
+    BIC(model4.kurs),
+    BIC(model5.kurs)
+  )
+)
+
+hasil_model_kurs
+```
+Berdasarkan pendugaan parameter di atas, nilai AIC terkecil dimiliki oleh model ARIMA(0,1,0) with drift dan parameter model ARIMA(0,1,0) with drift juga seluruhnya signifikan sehingga model yang dipilih adalah model ARIMA(0,1,0) with drift.
+
+# Analisis Sisaan
+Model terbaik hasil identifikasi kemudian dicek asumsi sisaannya. Sisaan model ARIMA harus memenuhi asumsi normalitas, kebebasan sisaan, dan kehomogenan ragam. Diagnostik model dilakukan secara eksplorasi dan uji formal.
+```{r}
+# model terpilih
+sisaan.kurs <- model5.kurs$residuals
+
+# qq plot
+car::qqPlot(sisaan.kurs)
+
+# plot sisaan vs waktu
+plot(c(1:length(sisaan.kurs)), sisaan.kurs, type="p",
+     xlab="Waktu", ylab="Sisaan", main="Plot Sisaan")
+
+# acf dan pacf
+acf(sisaan.kurs, main="ACF Sisaan")
+pacf(sisaan.kurs, main="PACF Sisaan")
+```
+Berdasarkan plot kuantil-kuantil normal, secara eksploratif terlihat bahwa sisaan tidak sepenuhnya menyebar normal karena titik-titik cenderung menyimpang dari garis 45∘. Selain itu, lebar pita sebaran sisaan tampak tidak seragam, yang mengindikasikan adanya heterogenitas ragam. Sementara itu, plot ACF dan PACF sisaan dari model ARIMA(0,1,1) menunjukkan tidak adanya spike signifikan pada 20 lag pertama, sehingga secara visual sisaan dapat dianggap saling bebas. Kondisi ini akan diuji lebih lanjut dengan uji formal.
+
+## Uji Formal
+```{r}
+#1) Sisaan Menyebar Normal 
+ks.test(sisaan.kurs,"pnorm")  #gagal tolak H0 > sisaan menyebar normal
+```
+Selain dengan eksplorasi, asumsi tersebut dapat diuji menggunakan uji formal. Pada tahapan ini uji formal yang digunakan untuk normalitas adalah uji Kolmogorov-Smirnov (KS). Hipotesis pada uji KS adalah sebagai berikut.
+
+$H_0$ : Sisaan menyebar normal
+
+$H_1$ : Sisaan tidak menyebar normal
+
+Berdasarkan uji KS tersebut, didapat p-value yang kurang dari taraf nyata 5% sehingga tolak dan menandakan bahwa sisaan tidak menyebar normal. Hal ini sesuai dengan hasil eksplorasi menggunakan plot kuantil-kuantil normal.
+ 
+```{r}
+#2) Sisaan saling bebas/tidak ada autokorelasi 
+Box.test(sisaan.kurs, type = "Ljung")  #gagal tolak H0 > sisaan saling bebas
+```
+Selanjutnya akan dilakukan uji formal untuk kebebasan sisaan menggunakan uji Ljung-Box. Hipotesis yang digunakan adalah sebagai berikut.
+
+$H_0$ : Sisaan saling bebas
+
+$H_1$ : Sisaan tidak saling bebas
+
+Berdasarkan uji Ljung-Box tersebut, didapat p-value sebesar 0.1723 yang lebih besar dari taraf nyata 5% sehingga gagal tolak dan menandakan bahwa sisaan saling bebas. Hal ini berbeda dengan eksplorasi.
+ 
+```{r}
+#3) Sisaan homogen 
+Box.test((sisaan.kurs)^2, type = "Ljung")  #gagal tolak H0 > sisaan homogen
+```
+Hipotesis yang digunakan untuk uji kehomogenan ragam adalah sebagai berikut.
+
+$H_0$ : Ragam sisaan homogen
+
+$H_1$ : Ragam sisaan tidak homogen
+
+Berdasarkan uji Ljung-Box terhadap sisaan kuadrat tersebut, didapat p-value sebesar 0.2372 yang lebih dari taraf nyata 5% sehingga gagal tolak H0 dan menandakan bahwa ragam sisaan homogen.
+ 
+```{r}
+#4) Nilai tengah sisaan sama dengan nol 
+t.test(sisaan.kurs, mu = 0, conf.level = 0.95)  #gagal tolak h0 > nilai tengah sisaan sama dengan 0
+```
+Terakhir, dengan uji-t, akan dicek apakah nilai tengah sisaan sama dengan nol. Hipotesis yang diujikan sebagai berikut.
+
+$H_0$ : nilai tengah sisaan sama dengan 0
+
+$H_1$ : nilai tengah sisaan tidak sama dengan 0
+
+Berdasarkan uji-t tersebut, didapat p-value sebesar 0.9989 yang lebih besar dari taraf nyata 5% sehingga gagal tolak dan menandakan bahwa nilai tengah sisaan sama dengan nol. 
+
+# Overfitting
+Model ARIMA(0,1,0) with drift dinaikkan orde AR dan MA-nya
+Kandidat: ARIMA(1,1,0) with drift, ARIMA(0,1,1) with drift, ARIMA(1,1,1) with drift
+```{r}
+model5a.kurs <- Arima(train.tr, order=c(1,1,0), include.drift=TRUE, method="ML")
+summary(model5a.kurs)
+lmtest::coeftest(model5a.kurs)
+```
+
+```{r}
+model5b.kurs <- Arima(train.tr, order=c(0,1,1), include.drift=TRUE, method="ML")
+summary(model5b.kurs)
+lmtest::coeftest(model5b.kurs)
+```
+
+```{r}
+model5c.kurs <- Arima(train.tr, order=c(1,1,1), include.drift=TRUE, method="ML")
+summary(model5c.kurs)
+lmtest::coeftest(model5c.kurs)
+```
+
+```{r}
+# Ringkasan overfitting
+overfitting_kurs <- data.frame(
+  Model = c("ARIMA(0,1,0) with drift",
+            "ARIMA(1,1,0) with drift",
+            "ARIMA(0,1,1) with drift",
+            "ARIMA(1,1,1) with drift"),
+  AIC   = c(AIC(model5.kurs),
+            AIC(model5a.kurs),
+            AIC(model5b.kurs),
+            AIC(model5c.kurs)),
+  BIC   = c(BIC(model5.kurs),
+            BIC(model5a.kurs),
+            BIC(model5b.kurs),
+            BIC(model5c.kurs))
+)
+
+overfitting_kurs
+```
+ARIMA(1,1,1) with drift layak dipertimbangkan sebagai model terbaik hasil overfitting. Meskipun BIC-nya lebih besar (karena penalti parameter), AIC tetap menjadi kriteria utama yang digunakan di sini, dan penambahan orde AR(1) serta MA(1) terbukti memperbaiki model secara signifikan.
+
+Namun, sebelum memutuskan model final, tetap perlu dicek analisis sisaan dari model ARIMA(1,1,1) with drift untuk memastikan asumsi normalitas, kebebasan, dan kehomogenan ragam sisaan terpenuhi. Jika asumsi sisaan terpenuhi → ARIMA(1,1,1) with drift menjadi model final untuk peramalan.
+
+
+```{r}
+# Analisis Sisaan model overfitting terbaik
+sisaan.final <- model5c.kurs$residuals
+par(mfrow=c(2,2))
+
+car::qqPlot(sisaan.final)
+
+plot(c(1:length(sisaan.final)), sisaan.final, type="l",
+     xlab="Waktu", ylab="Sisaan", main="Plot Sisaan ARIMA(1,1,1) with drift")
+
+acf(sisaan.final, main="ACF Sisaan")
+pacf(sisaan.final, main="PACF Sisaan")
+```
+
+```{r}
+#UJI FORMAL SISAAN
+# 1) Normalitas sisaan (Uji Kolmogorov-Smirnov)
+ks.test(sisaan.final, "pnorm")
+
+# 2) Kebebasan sisaan (Uji Ljung-Box)
+Box.test(sisaan.final, type = "Ljung")
+
+# 3) Kehomogenan ragam sisaan (Uji Ljung-Box pada sisaan kuadrat)
+Box.test((sisaan.final)^2, type = "Ljung")
+
+# 4) Nilai tengah sisaan sama dengan nol (Uji-t)
+t.test(sisaan.final, mu = 0, conf.level = 0.95)
+```
+Karena model overfitting dengan uji asumsinya tidak terpenuhi semua dengan Sisaan tidak menyebar normal (tidak memenuhi asumsi normalitas), sisaan saling bebas (tidak ada autokorelasi), Ragam sisaan homogen, serta nilai tengah sisaan sama dengan nol, maka untuk model terbaik digunakan model ARIMA(0,1,0) with drift dengan asumsi yang telah terpenuhi semua.
+
+# Model Terbaik
+```{r}
+model.terbaik.1 <- model5.kurs
+
+# Forecast dalam skala log
+ramalan.log <- forecast::forecast(model.terbaik.1, h = 70)
+```
+
+```{r}
+# Inverse transform
+ramalan.asli <- exp(ramalan.log$mean)
+summary(ramalan.asli)
+range(ramalan.asli)
+```
+
+```{r}
+# Akurasi
+accuracy(ramalan.asli, test.ts)
+```
+
+```{r}
+# Plot
+plot.ts(test.ts, col="navyblue", lwd=2,
+        xlab="Waktu", ylab="Kurs",
+        main="Perbandingan Data Aktual dan Hasil Peramalan")
+lines(ramalan.asli, col="red", lwd=2)
+legend("topleft", legend=c("Aktual","Peramalan"),
+       col=c("navyblue","red"), lty=1, lwd=2)
+```
+
+Berdasarkan hasil peramalan menggunakan model ARIMA(0,1,0) with drift, nilai ramalan berada pada rentang 4815–5338 USD dengan pola naik linier. Namun, data aktual pada periode uji justru bergerak fluktuatif pada rentang ~4000–4800 USD. Hal ini menyebabkan error peramalan yang besar:
+- MAPE sebesar 16.70% — jauh di atas ambang kelayakan (<10%)
+
+- Theil's U sebesar 13.12 — mengindikasikan model jauh lebih buruk dari metode naive
+
+- ACF1 sisaan sebesar 0.948 — error peramalan berautokorelasi kuat, menandakan model gagal menangkap pola data
+
+Dengan demikian, model ARIMA(0,1,0) with drift belum cukup layak digunakan untuk peramalan harga emas. Diperlukan model alternatif yang lebih sesuai untuk penelitian selanjutnya.
+
